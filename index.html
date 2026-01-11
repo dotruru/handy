@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyberpunk Particle System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/cyberpunk.css">
+</head>
+<body>
+    <div id="loading">INITIALIZING CYBERPUNK SYSTEM...</div>
+    
+    <canvas id="grid-canvas"></canvas>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+    
+    <div id="canvas-container"></div>
+    
+    <!-- HUD Elements -->
+    <div id="hud-tl" class="hud">
+        <div class="hud-label">FPS</div>
+        <div class="hud-value" id="fps">0</div>
+    </div>
+    
+    <div id="hud-tr" class="hud">
+        <div class="hud-label">PARTICLES</div>
+        <div class="hud-value">12,000</div>
+    </div>
+    
+    <div id="hud-bl" class="hud">
+        <div class="hud-label">LEFT HAND</div>
+        <div class="hud-value" id="left-status">NO SIGNAL</div>
+    </div>
+    
+    <div id="hud-br" class="hud">
+        <div class="hud-label">RIGHT HAND</div>
+        <div class="hud-value" id="right-status">NO SIGNAL</div>
+    </div>
+
+    <video id="video" autoplay playsinline></video>
+
+    <!-- Three.js -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js" crossorigin="anonymous"></script>
+    
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Application Code -->
+    <script type="module" defer src="js/main.js"></script>
+</body>
+</html>
