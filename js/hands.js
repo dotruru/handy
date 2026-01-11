@@ -1,6 +1,6 @@
 /**
  * MediaPipe Hands Integration - Stark Edition
- * Enhanced with smoothing, debounce, and confidence tracking
+ * Simplified and reliable finger detection
  */
 
 // Access global MediaPipe objects
@@ -11,14 +11,12 @@ const Camera = window.Camera;
 // CONFIGURATION
 // ============================================
 export const CONFIG = {
-    modelComplexity: 1,              // 1 is most stable (0=lite, 1=full, 2=heavy but less stable)
-    minDetectionConfidence: 0.6,     // Lower = more sensitive detection
-    minTrackingConfidence: 0.7,      // Higher = more stable tracking
-    smoothingBeta: 0.4,              // One Euro Filter: lower = smoother
-    smoothingMinCutoff: 1.0,         // One Euro Filter: frequency cutoff
-    smoothingDCutoff: 1.0,           // One Euro Filter: derivative cutoff
-    gestureDebounceFrames: 3,        // Frames required to confirm gesture change
-    trailLength: 20                  // Index finger trail history length
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7,
+    smoothingFactor: 0.5,           // Simple EMA smoothing (0-1, higher = less smooth)
+    gestureDebounceFrames: 4,       // Frames required to confirm gesture change
+    trailLength: 15
 };
 
 // ============================================
@@ -31,16 +29,16 @@ export let rightConfidence = 0;
 
 let onHandsUpdateCallback = null;
 
-// Smoothing state per hand (21 landmarks x 3 coords each)
-const smoothers = {
+// Simple smoothing state (EMA)
+const smoothedLandmarks = {
     left: null,
     right: null
 };
 
-// Gesture debounce state
+// Gesture debounce state (start at 0 = fist/no fingers)
 const gestureState = {
-    left: { current: -1, candidate: -1, frameCount: 0 },
-    right: { current: -1, candidate: -1, frameCount: 0 }
+    left: { current: 0, candidate: 0, frameCount: 0 },
+    right: { current: 0, candidate: 0, frameCount: 0 }
 };
 
 // Index finger trail for holo effect
@@ -50,189 +48,58 @@ export const indexTrail = {
 };
 
 // ============================================
-// ONE EURO FILTER (velocity-adaptive smoothing)
+// SIMPLE EMA SMOOTHING
 // ============================================
-class OneEuroFilter {
-    constructor(freq, minCutoff = 1.0, beta = 0.0, dCutoff = 1.0) {
-        this.freq = freq;
-        this.minCutoff = minCutoff;
-        this.beta = beta;
-        this.dCutoff = dCutoff;
-        this.xPrev = null;
-        this.dxPrev = 0;
-        this.lastTime = null;
+function smoothLandmarksEMA(newLandmarks, prevSmoothed, factor) {
+    if (!prevSmoothed) {
+        return newLandmarks.map(lm => ({ x: lm.x, y: lm.y, z: lm.z || 0 }));
     }
-
-    alpha(cutoff) {
-        const tau = 1.0 / (2 * Math.PI * cutoff);
-        const te = 1.0 / this.freq;
-        return 1.0 / (1.0 + tau / te);
-    }
-
-    filter(x, timestamp = null) {
-        if (this.xPrev === null) {
-            this.xPrev = x;
-            this.lastTime = timestamp || Date.now();
-            return x;
-        }
-
-        // Update frequency based on timestamp
-        if (timestamp !== null && this.lastTime !== null) {
-            const dt = (timestamp - this.lastTime) / 1000;
-            if (dt > 0) this.freq = 1.0 / dt;
-        }
-        this.lastTime = timestamp;
-
-        // Compute derivative
-        const dx = (x - this.xPrev) * this.freq;
-        const edx = this.alpha(this.dCutoff) * dx + (1 - this.alpha(this.dCutoff)) * this.dxPrev;
-        this.dxPrev = edx;
-
-        // Compute cutoff (velocity-adaptive)
-        const cutoff = this.minCutoff + this.beta * Math.abs(edx);
-        
-        // Filter
-        const result = this.alpha(cutoff) * x + (1 - this.alpha(cutoff)) * this.xPrev;
-        this.xPrev = result;
-        
-        return result;
-    }
-
-    reset() {
-        this.xPrev = null;
-        this.dxPrev = 0;
-        this.lastTime = null;
-    }
-}
-
-// Create smoother array for a hand (21 landmarks * 3 coords = 63 filters)
-function createHandSmoothers() {
-    const filters = [];
-    for (let i = 0; i < 21 * 3; i++) {
-        filters.push(new OneEuroFilter(
-            60, // Assume 60fps
-            CONFIG.smoothingMinCutoff,
-            CONFIG.smoothingBeta,
-            CONFIG.smoothingDCutoff
-        ));
-    }
-    return filters;
-}
-
-// Apply smoothing to landmarks
-function smoothLandmarks(landmarks, smootherArray, timestamp) {
-    if (!smootherArray) return landmarks;
     
-    return landmarks.map((lm, i) => {
-        const baseIdx = i * 3;
-        return {
-            x: smootherArray[baseIdx].filter(lm.x, timestamp),
-            y: smootherArray[baseIdx + 1].filter(lm.y, timestamp),
-            z: smootherArray[baseIdx + 2].filter(lm.z || 0, timestamp)
-        };
-    });
+    return newLandmarks.map((lm, i) => ({
+        x: prevSmoothed[i].x + (lm.x - prevSmoothed[i].x) * factor,
+        y: prevSmoothed[i].y + (lm.y - prevSmoothed[i].y) * factor,
+        z: (prevSmoothed[i].z || 0) + ((lm.z || 0) - (prevSmoothed[i].z || 0)) * factor
+    }));
 }
 
 // ============================================
-// IMPROVED FINGER DETECTION
+// SIMPLE FINGER DETECTION (more reliable)
 // ============================================
 
 /**
- * Calculate angle between three points (in radians)
+ * Count extended fingers - simple and reliable
+ * Uses Y-position comparison for fingers, X-distance for thumb
  */
-function calculateAngle(p1, p2, p3) {
-    const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
-    const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-    const dot = v1.x * v2.x + v1.y * v2.y;
-    const cross = v1.x * v2.y - v1.y * v2.x;
-    return Math.atan2(cross, dot);
-}
-
-/**
- * Check if thumb is extended using angle-based detection
- */
-function isThumbExtended(landmarks) {
-    // Thumb landmarks: 1 (CMC), 2 (MCP), 3 (IP), 4 (TIP)
-    const cmc = landmarks[1];
-    const mcp = landmarks[2];
-    const ip = landmarks[3];
-    const tip = landmarks[4];
-    
-    // Check angle at MCP joint - extended thumb has straighter angle
-    const angle = Math.abs(calculateAngle(cmc, mcp, ip));
-    
-    // Also check distance from tip to palm center
-    const palm = landmarks[0];
-    const tipDist = Math.sqrt(
-        Math.pow(tip.x - palm.x, 2) + 
-        Math.pow(tip.y - palm.y, 2)
-    );
-    const mcpDist = Math.sqrt(
-        Math.pow(mcp.x - palm.x, 2) + 
-        Math.pow(mcp.y - palm.y, 2)
-    );
-    
-    // Thumb is extended if angle is relatively straight AND tip is further from palm than MCP
-    return angle > 2.0 && tipDist > mcpDist * 1.2;
-}
-
-/**
- * Check if a finger is extended using improved detection
- */
-function isFingerExtended(landmarks, tipIdx, pipIdx, mcpIdx) {
-    const tip = landmarks[tipIdx];
-    const pip = landmarks[pipIdx];
-    const mcp = landmarks[mcpIdx];
-    const palm = landmarks[0];
-    
-    // Primary check: tip Y vs PIP Y (for upright hand)
-    const yExtended = tip.y < pip.y;
-    
-    // Secondary check: distance from palm
-    const tipDist = Math.sqrt(
-        Math.pow(tip.x - palm.x, 2) + 
-        Math.pow(tip.y - palm.y, 2)
-    );
-    const pipDist = Math.sqrt(
-        Math.pow(pip.x - palm.x, 2) + 
-        Math.pow(pip.y - palm.y, 2)
-    );
-    
-    // Finger extended if tip above PIP AND tip further from palm
-    return yExtended && tipDist > pipDist * 0.95;
-}
-
-/**
- * Count extended fingers with improved accuracy
- */
-export function countExtendedFingers(landmarks) {
+export function countExtendedFingers(landmarks, isRightHand = true) {
     let count = 0;
-
-    // Thumb (angle-based)
-    if (isThumbExtended(landmarks)) {
-        count++;
+    
+    // Thumb: Check if tip (4) is extended away from palm horizontally
+    // For right hand: thumb extends left (tip.x < ip.x)
+    // For left hand: thumb extends right (tip.x > ip.x)
+    const thumbTip = landmarks[4];
+    const thumbIP = landmarks[3];
+    const thumbMCP = landmarks[2];
+    
+    if (isRightHand) {
+        // Right hand (appears on LEFT of mirrored screen): thumb tip should be to the LEFT of IP
+        if (thumbTip.x < thumbIP.x - 0.02) count++;
+    } else {
+        // Left hand (appears on RIGHT of mirrored screen): thumb tip should be to the RIGHT of IP
+        if (thumbTip.x > thumbIP.x + 0.02) count++;
     }
-
-    // Index finger (tip: 8, PIP: 6, MCP: 5)
-    if (isFingerExtended(landmarks, 8, 6, 5)) {
-        count++;
-    }
-
-    // Middle finger (tip: 12, PIP: 10, MCP: 9)
-    if (isFingerExtended(landmarks, 12, 10, 9)) {
-        count++;
-    }
-
-    // Ring finger (tip: 16, PIP: 14, MCP: 13)
-    if (isFingerExtended(landmarks, 16, 14, 13)) {
-        count++;
-    }
-
-    // Pinky finger (tip: 20, PIP: 18, MCP: 17)
-    if (isFingerExtended(landmarks, 20, 18, 17)) {
-        count++;
-    }
-
+    
+    // Index finger (8): tip should be ABOVE pip (6) - lower Y value
+    if (landmarks[8].y < landmarks[6].y - 0.02) count++;
+    
+    // Middle finger (12): tip should be ABOVE pip (10)
+    if (landmarks[12].y < landmarks[10].y - 0.02) count++;
+    
+    // Ring finger (16): tip should be ABOVE pip (14)
+    if (landmarks[16].y < landmarks[14].y - 0.02) count++;
+    
+    // Pinky (20): tip should be ABOVE pip (18)
+    if (landmarks[20].y < landmarks[18].y - 0.02) count++;
+    
     return count;
 }
 
@@ -240,10 +107,6 @@ export function countExtendedFingers(landmarks) {
 // GESTURE DEBOUNCING
 // ============================================
 
-/**
- * Apply debounce to gesture changes
- * Returns stable finger count (only changes after N consecutive frames)
- */
 function debounceGesture(rawCount, state) {
     if (rawCount === state.candidate) {
         state.frameCount++;
@@ -269,14 +132,13 @@ function updateTrail(trail, point, maxLength) {
         timestamp: Date.now()
     });
     
-    // Keep trail at max length
     while (trail.length > maxLength) {
         trail.shift();
     }
 }
 
 // ============================================
-// CALLBACK MANAGEMENT
+// CALLBACK
 // ============================================
 
 export function setHandsUpdateCallback(callback) {
@@ -288,8 +150,6 @@ export function setHandsUpdateCallback(callback) {
 // ============================================
 
 export function onHandsResults(results) {
-    const timestamp = Date.now();
-    
     leftHandData = null;
     rightHandData = null;
     leftConfidence = 0;
@@ -301,27 +161,28 @@ export function onHandsResults(results) {
             const handedness = results.multiHandedness[i].label;
             const confidence = results.multiHandedness[i].score || 0.9;
             
-            // Determine which hand (MediaPipe mirrors)
-            const isLeft = handedness === 'Right';
-            const handKey = isLeft ? 'left' : 'right';
+            // MediaPipe labels: "Left" means YOUR left hand
+            // But the video is mirrored, so your left hand appears on the RIGHT side of screen
+            // We want: leftHandData = your left hand (appears on right of screen)
+            const isYourLeftHand = handedness === 'Left';
+            const handKey = isYourLeftHand ? 'left' : 'right';
             
-            // Initialize smoothers if needed
-            if (!smoothers[handKey]) {
-                smoothers[handKey] = createHandSmoothers();
-            }
+            // Apply simple smoothing
+            smoothedLandmarks[handKey] = smoothLandmarksEMA(
+                rawLandmarks, 
+                smoothedLandmarks[handKey], 
+                CONFIG.smoothingFactor
+            );
+            const landmarks = smoothedLandmarks[handKey];
             
-            // Apply landmark smoothing
-            const landmarks = smoothLandmarks(rawLandmarks, smoothers[handKey], timestamp);
+            // Count fingers with hand orientation
+            const rawFingerCount = countExtendedFingers(landmarks, !isYourLeftHand);
             
-            // Count fingers with improved detection
-            const rawFingerCount = countExtendedFingers(landmarks);
-            
-            // Apply gesture debouncing
+            // Apply debouncing
             const stableFingerCount = debounceGesture(rawFingerCount, gestureState[handKey]);
             
-            // Update index finger trail
-            const trail = indexTrail[handKey];
-            updateTrail(trail, landmarks[8], CONFIG.trailLength);
+            // Update trail
+            updateTrail(indexTrail[handKey], landmarks[8], CONFIG.trailLength);
             
             // Build hand data
             const handData = {
@@ -332,10 +193,10 @@ export function onHandsResults(results) {
                 indexTip: landmarks[8],
                 palmCenter: landmarks[0],
                 confidence,
-                trail: [...trail]
+                trail: [...indexTrail[handKey]]
             };
 
-            if (isLeft) {
+            if (isYourLeftHand) {
                 leftHandData = handData;
                 leftConfidence = confidence;
             } else {
@@ -344,20 +205,17 @@ export function onHandsResults(results) {
             }
         }
     } else {
-        // Reset smoothers and trails when hands lost
-        if (!leftHandData && smoothers.left) {
-            smoothers.left.forEach(f => f.reset());
+        // Reset when hands lost
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+            smoothedLandmarks.left = null;
+            smoothedLandmarks.right = null;
             indexTrail.left = [];
-            gestureState.left = { current: -1, candidate: -1, frameCount: 0 };
-        }
-        if (!rightHandData && smoothers.right) {
-            smoothers.right.forEach(f => f.reset());
             indexTrail.right = [];
-            gestureState.right = { current: -1, candidate: -1, frameCount: 0 };
+            gestureState.left = { current: 0, candidate: 0, frameCount: 0 };
+            gestureState.right = { current: 0, candidate: 0, frameCount: 0 };
         }
     }
 
-    // Trigger callback
     if (onHandsUpdateCallback) {
         onHandsUpdateCallback(leftHandData, rightHandData);
     }
@@ -383,13 +241,12 @@ export async function initMediaPipe(videoElement) {
 
     hands.onResults(onHandsResults);
 
-    // Start webcam with optimal settings
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { 
                 width: { ideal: 1280 },
                 height: { ideal: 720 },
-                frameRate: { ideal: 60, min: 30 }
+                frameRate: { ideal: 30 }
             } 
         });
         videoElement.srcObject = stream;
@@ -421,35 +278,27 @@ export function updateHUD() {
     const rightConf = document.getElementById('right-confidence');
 
     if (leftHandData) {
-        const modes = ['DRAW MODE', 'HELLO', 'ARUKA', 'LISSAJOUS', 'KOCH', 'CATCH'];
-        leftStatus.textContent = modes[leftHandData.fingerCount] || 'ACTIVE';
+        const modes = ['DRAW', 'HELLO', 'ARUKA', 'LISSAJOUS', 'KOCH', 'CATCH'];
+        leftStatus.textContent = modes[leftHandData.fingerCount] || `${leftHandData.fingerCount}F`;
         if (leftConf) {
             leftConf.textContent = `${Math.round(leftConfidence * 100)}%`;
-            leftConf.style.opacity = leftConfidence;
         }
     } else {
         leftStatus.textContent = 'NO SIGNAL';
-        if (leftConf) {
-            leftConf.textContent = '0%';
-            leftConf.style.opacity = 0.3;
-        }
+        if (leftConf) leftConf.textContent = '0%';
     }
 
     if (rightHandData) {
         if (rightHandData.fingerCount === 5) {
             rightStatus.textContent = 'NEBULA';
         } else {
-            rightStatus.textContent = 'SCATTER';
+            rightStatus.textContent = `SCATTER ${rightHandData.fingerCount}F`;
         }
         if (rightConf) {
             rightConf.textContent = `${Math.round(rightConfidence * 100)}%`;
-            rightConf.style.opacity = rightConfidence;
         }
     } else {
         rightStatus.textContent = 'NO SIGNAL';
-        if (rightConf) {
-            rightConf.textContent = '0%';
-            rightConf.style.opacity = 0.3;
-        }
+        if (rightConf) rightConf.textContent = '0%';
     }
 }

@@ -397,15 +397,16 @@ export function updateParticles() {
     }
 
     // ----------------------------------------
-    // PULSE EFFECT (add glow during interactions)
+    // PULSE EFFECT (subtle glow during interactions)
     // ----------------------------------------
-    if (pulseIntensity > 0.01) {
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
+    if (pulseIntensity > 0.05) {
+        // Only apply pulse to a subset of particles for subtle effect
+        const pulseStrength = pulseIntensity * 0.1;
+        for (let i = 0; i < PARTICLE_COUNT; i += 10) {
             const i3 = i * 3;
-            // Add pulse color overlay
-            particleColors[i3] = Math.min(1, particleColors[i3] + pulseColor.r * pulseIntensity * 0.2);
-            particleColors[i3 + 1] = Math.min(1, particleColors[i3 + 1] + pulseColor.g * pulseIntensity * 0.2);
-            particleColors[i3 + 2] = Math.min(1, particleColors[i3 + 2] + pulseColor.b * pulseIntensity * 0.2);
+            particleColors[i3] = Math.min(1, particleColors[i3] + pulseColor.r * pulseStrength);
+            particleColors[i3 + 1] = Math.min(1, particleColors[i3 + 1] + pulseColor.g * pulseStrength);
+            particleColors[i3 + 2] = Math.min(1, particleColors[i3 + 2] + pulseColor.b * pulseStrength);
         }
         particles.geometry.attributes.color.needsUpdate = true;
         pulseIntensity *= PULSE_DECAY;
