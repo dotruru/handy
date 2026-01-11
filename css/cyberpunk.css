@@ -16,6 +16,7 @@ body {
     height: 100vh;
     top: 0;
     left: 0;
+    z-index: 5;
 }
 
 /* Cyberpunk Grid Background */
@@ -27,6 +28,17 @@ body {
     height: 100%;
     z-index: 0;
     opacity: 0.15;
+}
+
+/* Holo Trail Canvas */
+#trail-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 4;
+    pointer-events: none;
 }
 
 /* Scanlines */
@@ -102,11 +114,41 @@ body {
     font-size: 10px;
     opacity: 0.7;
     margin-bottom: 3px;
+    text-transform: uppercase;
 }
 
 .hud-value {
     font-size: 18px;
     font-weight: 700;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+}
+
+.hud-confidence {
+    font-size: 11px;
+    opacity: 0.6;
+    margin-top: 4px;
+    transition: opacity 0.3s ease;
+}
+
+/* Status color states */
+.hud-value.active {
+    color: #00FF88;
+    text-shadow: 0 0 10px #00FF88, 0 0 20px #00FF88;
+}
+
+.hud-value.nebula {
+    color: #FF00FF;
+    text-shadow: 0 0 10px #FF00FF, 0 0 20px #FF00FF;
+}
+
+.hud-value.drawing {
+    color: #FFFF00;
+    text-shadow: 0 0 10px #FFFF00, 0 0 20px #FFFF00;
+}
+
+.hud-value.basketball {
+    color: #FF8800;
+    text-shadow: 0 0 10px #FF8800, 0 0 20px #FF8800;
 }
 
 #video {
@@ -122,6 +164,7 @@ body {
     height: 100%;
     background: #000;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     z-index: 100;
@@ -130,6 +173,68 @@ body {
     text-shadow: 0 0 20px #00FFFF;
 }
 
+#loading::after {
+    content: '';
+    width: 40px;
+    height: 40px;
+    border: 3px solid transparent;
+    border-top-color: #00FFFF;
+    border-radius: 50%;
+    margin-top: 20px;
+    animation: loading-spin 1s linear infinite;
+}
+
+@keyframes loading-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
 #loading.hidden {
     display: none;
+}
+
+/* Stark-style glow effects */
+@keyframes pulse-glow {
+    0%, 100% { opacity: 0.8; }
+    50% { opacity: 1; }
+}
+
+.hud-value {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Corner brackets for Stark HUD feel */
+.hud::before,
+.hud::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: #00FFFF;
+    border-style: solid;
+    opacity: 0.5;
+}
+
+#hud-tl::before {
+    top: 10px;
+    left: 10px;
+    border-width: 2px 0 0 2px;
+}
+
+#hud-tr::before {
+    top: 10px;
+    right: 10px;
+    border-width: 2px 2px 0 0;
+}
+
+#hud-bl::before {
+    bottom: 10px;
+    left: 10px;
+    border-width: 0 0 2px 2px;
+}
+
+#hud-br::before {
+    bottom: 10px;
+    right: 10px;
+    border-width: 0 2px 2px 0;
 }
